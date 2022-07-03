@@ -1,0 +1,318 @@
+---
+title: "TTCI"
+author: "Dohyung Bang"
+output: html_document
+---
+
+```{r "setup", include = FALSE}
+#knitr::opts_knit$set(root.dir = "D:/Dropbox (Personal)/1_PURDUE/1_PAPER/TTCI/")
+knitr::opts_knit$set(root.dir = "C:/Users/dhbang/Dropbox (Personal)/1_PURDUE/1_PAPER/TTCI/")
+#knitr::opts_knit$set(root.dir = "/Users/dhbang/Dropbox (Personal)/1_PURDUE/1_PAPER/TTCI/")
+```
+
+```{r, include = FALSE}
+library(readr)
+library(dplyr)                
+library(tidyr)
+library(Hmisc)
+library(psych)
+library(stringr)
+library(lubridate)
+library(productivity)
+library(plm)
+library(ggrepel)
+```
+
+## Read Data
+
+```{r}
+label_list <- read_csv("./label_list.csv") %>% rename(country = ISO_Code)
+
+ttci <- 
+  read_csv("./ttci_df_v2.csv") %>% 
+  gather(ALB:ZWE, key = "country", value = "value") %>% 
+  spread(key = "indexes", value = "value")
+
+ttdi <- 
+  read_csv("./ttdi_df_v1.csv") %>% 
+  gather(ALB:ZMB, key = "country", value = "value") %>% 
+  spread(key = "indexes", value = "value")
+
+
+country_check <- 
+  rbind(ttci, ttdi) %>% 
+  filter(!is.na(`TT_industry_GDP`)) %>% 
+  group_by(country) %>% 
+  summarise(freq = n()) %>% 
+  filter(freq == 4)
+  
+total_df <- 
+  rbind(ttci, ttdi) %>% 
+  filter(country %in% country_check$country) %>% 
+  as.data.frame() %>% 
+  mutate(infrastructure = Air_transport_infrastructure +Ground_and_port_infrastructure,
+         resources = Natural_resources + Cultural_resources)
+
+total_df[,3:ncol(total_df)] <- apply(total_df[,3:ncol(total_df)], 2, as.numeric)
+```
+
+
+# 1. Descriptive Analytics
+
+## 1-1. Correlation of ```GDP``` & Components
+
+### Original GDP
+```{r}
+ggplot(total_df, aes(x = ICT_readiness, y = TT_industry_GDP)) + 
+  facet_wrap(~year) + 
+  geom_point()
+```
+
+### Log of GDP
+
+```{r}
+ggplot(total_df, aes(x = ICT_readiness, y = log(TT_industry_GDP))) + 
+  facet_wrap(~year) + 
+  stat_smooth() + 
+  geom_point()
+```
+### DX Elasticity
+
+```{r}
+ggplot(total_df, aes(x = log(ICT_readiness), y = log(TT_industry_GDP))) + 
+  facet_wrap(~year) + 
+  stat_smooth() + 
+  geom_point()
+```
+
+### Output variable Distribution 
+
+#### Travel & Tourism Industry GDP
+```{r}
+ggplot(total_df) + 
+  geom_density(aes(x = TT_industry_GDP, y = ..density..))
+```
+
+#### Arrivals
+```{r}
+ggplot(total_df) +
+  geom_density(aes(x = International_tourist_arrivals, y = ..density..))
+```
+
+#### Share of TT GDP
+```{r}
+ggplot(total_df) +
+  geom_density(aes(x = TT_industry_Share_of_GDP, y = ..density..))
+```
+
+#### Travel & Tourism Industry Employment
+```{r}
+ggplot(total_df) +
+  geom_density(aes(x = TT_industry_Employment, y = ..density..)) 
+```
+
+## 1-2. ``` ICT Readiness ``` & ```Travel & Tourism Industry GDP``` over time
+
+### Korea
+```{r}
+total_df %>% 
+  filter(country == "KOR") %>% 
+  select(year, ICT_readiness, TT_industry_GDP) %>%
+  gather(ICT_readiness, TT_industry_GDP, key = "var", value = "value") %>% 
+  ggplot(aes(x = year, y = value)) +
+  facet_wrap(~var, scale = "free") + 
+  scale_x_continuous(breaks = c(2015, 2017, 2019, 2021)) + 
+  geom_line() + 
+  geom_point()
+```
+
+### USA
+```{r}
+total_df %>% 
+  filter(country == "USA") %>% 
+  select(year, ICT_readiness, TT_industry_GDP) %>%
+  gather(ICT_readiness, TT_industry_GDP, key = "var", value = "value") %>% 
+  ggplot(aes(x = year, y = value)) +
+  facet_wrap(~var, scale = "free") + 
+  scale_x_continuous(breaks = c(2015, 2017, 2019, 2021)) + 
+  geom_line() + 
+  geom_point()
+```
+
+### JAPAN
+```{r}
+total_df %>% 
+  filter(country == "JPN") %>% 
+  select(year, ICT_readiness, TT_industry_GDP) %>%
+  gather(ICT_readiness, TT_industry_GDP, key = "var", value = "value") %>% 
+  ggplot(aes(x = year, y = value)) +
+  facet_wrap(~var, scale = "free") + 
+  scale_x_continuous(breaks = c(2015, 2017, 2019, 2021)) + 
+  geom_line() + 
+  geom_point()
+```
+
+### CHINA
+```{r}
+total_df %>% 
+  filter(country == "CHN") %>% 
+  select(year, ICT_readiness, TT_industry_GDP) %>%
+  gather(ICT_readiness, TT_industry_GDP, key = "var", value = "value") %>% 
+  ggplot(aes(x = year, y = value)) +
+  facet_wrap(~var, scale = "free") + 
+  scale_x_continuous(breaks = c(2015, 2017, 2019, 2021)) + 
+  geom_line() + 
+  geom_point()
+```
+
+
+# 2. Panel Regression
+
+```{r}
+fe_model <- plm(International_tourist_arrivals ~ ICT_readiness + I(ICT_readiness^2), 
+                data = total_df, 
+                index = c("country"), 
+                model = "within")
+
+summary(fe_model)
+
+lm(log(TT_industry_GDP) ~ as.factor(year) + log(ICT_readiness), data = total_df) %>% summary()
+```
+
+# 3. Productivity
+
+```{r}
+mpi_result <- 
+  malm(data = total_df, id.var = "country", time.var = "year", 
+     x.vars = c("Qualification_of_the_labour_force", "resources", "Business_Environment", "infrastructure", "ICT_readiness"),
+     y.vars = c("TT_industry_GDP"), rts = "vrs")
+
+mpi_result <- mpi_result$Changes
+final_result <- 
+  mpi_result %>% 
+  rename(pc = malmquist,
+         ec = effch,
+         tc = tech,
+         pec = pure.out.effch,
+         sec = out.scalech,
+         year = Year.0,
+         year_to = Year.1) %>% 
+  as.data.frame() %>% 
+  left_join(total_df) %>% 
+  left_join(label_list)
+```
+
+```{r}
+pc.country <- tapply(final_result$pc, final_result$country, geometric.mean)
+pc.year <- tapply(final_result$pc, final_result$year_to, geometric.mean)
+
+ec.country <- tapply(final_result$ec, final_result$country, geometric.mean)
+ec.year <- tapply(final_result$ec, final_result$year_to, geometric.mean)
+
+tc.country <- tapply(final_result$tc, final_result$country, geometric.mean)
+tc.year <- tapply(final_result$tc, final_result$year_to, geometric.mean)
+
+overall_change_by_country <- cbind.data.frame(names(pc.country), pc.country, ec.country, tc.country)
+names(overall_change_by_country) <- c("country", "pc", "ec", "tc")
+
+overall_change_by_country <-
+  overall_change_by_country %>% left_join(final_result %>% select(country, Economy, Region, Sub_Region, Income_Group))
+overall_change_by_country <- overall_change_by_country[!duplicated(overall_change_by_country),]
+
+overall_change_by_year <- cbind.data.frame(names(pc.year), pc.year, ec.year, tc.year) 
+names(overall_change_by_year) <- c("year", "pc", "ec", "tc") 
+overall_change_by_year <- overall_change_by_year %>% mutate(year = as.numeric(year))
+```
+
+```{r, }
+theme <- theme_bw() +
+  theme(panel.background = element_rect(fill="white"),
+        panel.border = element_rect(colour = "grey", fill=NA, size=0.5),
+        panel.grid.major.y = element_line(colour = "lightgrey", linetype="dashed"),
+        panel.grid.major.x = element_line(colour = "white", linetype="dashed"),
+        panel.grid.minor = element_line(colour = "white"),
+        axis.text.x = element_text(size = 8, hjust=1, colour = "black", family = "serif"),
+        axis.text.y = element_text(size = 8, colour = "black", family = "serif"),
+        strip.text = element_text(size = 10, family = "serif"),
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.background = element_rect(color = "grey"),
+        
+        ) +
+  theme(plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm"))
+```
+
+```{r}
+ggplot(data = overall_change_by_country, 
+       aes(x = ec, 
+           y = tc, 
+           colour = Region)) + 
+  geom_point() +
+  theme +
+  xlab("Efficiency Changes") + 
+  ylab("Technological Changes") +
+  theme(panel.grid.major.x = element_line(colour = "lightgrey", linetype="dashed")) +
+  guides(colour = guide_legend(nrow = 2)) 
+
+```
+
+```{r}
+ggplot(data = overall_change_by_year %>% 
+         gather(pc, ec, tc, key = "index", value = "value"), 
+       aes(x = year, y = value, colour = index)) + 
+  geom_line() +
+  geom_point()
+```
+
+# 4. Clustering
+
+```{r}
+clust_set <- 
+  total_df %>% 
+  filter(year == 2021) %>%
+  select("Qualification_of_the_labour_force", "resources", 
+         "Business_Environment", "infrastructure", "ICT_readiness")
+```
+
+```{r}
+clust_z <- scale(clust_set) %>% as.data.frame()
+```
+
+```{r}
+WssPlot <- 
+  function(data, nc=20, seed=1234){
+  wss <- (nrow(data)-1)*sum(apply(data,2,var))
+  for (i in 2:nc){
+    set.seed(seed)
+    wss[i] <- sum(kmeans(data, centers=i)$withinss)}
+  plot(1:nc, wss, type="b", xlab="Number of Clusters",
+       ylab = "군집 내 거리제곱합")}
+```
+
+```{r}
+WssPlot(clust_z)
+```
+
+```{r}
+set.seed(1234)
+clust_result <- kmeans(clust_z, centers = 6)
+table(clust_result$cluster)
+```
+
+```{r}
+pca <- prcomp(clust_z, center = TRUE)
+pca_mat <- pca$x %>% as.data.frame()
+pca_mat$cluster <- clust_result$cluster %>% factor()
+country <- total_df %>% filter(year == 2021) %>% select(country)
+pca_mat$country <- country$country
+```
+
+```{r}
+ggplot(pca_mat, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point() + 
+  geom_label_repel(aes(label = country),
+                box.padding   = 0.35, 
+                point.padding = 0.5,
+                segment.color = 'grey50') 
+```
+
